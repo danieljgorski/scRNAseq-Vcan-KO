@@ -1,0 +1,13 @@
+dimplotlevels <- c("Fibro-Myo-1",
+                   "Fibro-Myo-2",
+                   "Fibro-Myo-3",
+                   "Fibro-Act-1",
+                   "Fibro-Act-2",
+                   "Fibro-IFN",
+                   "Fibro-Cyc",
+                   "Fibro-Rest",
+                   "Epi-Act-1",
+                   "Epi-Act-2",
+                   "Epi-Act-3",
+                   "Epi-Cyc",
+                   "Epi-Rest")

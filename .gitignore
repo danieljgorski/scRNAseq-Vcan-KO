@@ -1,0 +1,8 @@
+.Rproj.user
+.Rhistory
+.Rdata
+.Ruserdata
+.Rproj
+results/
+data/300_NGS_111119_new_aggr
+data/cellranger_aggr_new.csv
