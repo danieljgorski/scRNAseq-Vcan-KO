@@ -72,6 +72,13 @@ Additionally, the following standard R libraries were used:
 To reproduce the analysis, clone this repository and place the count matrices inside the `data` folder. It should then contain the following:
 
 ## Examples
+<p align="center">
+  <img src="/examples/DimPlot_basic_annotation.png" width="1000">
+</p>
+
+<p align="center">
+  <img src="/examples/Heatmap.png" width="1000">
+</p>
 
 ## To-do
 * Add abstract at submission
