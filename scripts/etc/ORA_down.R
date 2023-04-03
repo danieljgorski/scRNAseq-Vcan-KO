@@ -33,16 +33,19 @@ ORA_down <- function (df, identity, detected_genes, title) {
     top_GO_down <- head(ORA_down_sub@result[,c("Description", "geneID")], n=5)
     colnames(top_GO_down) <- c("GO term", "Genes") 
 
-    # plot ORA downregulated
+  # plot ORA downregulated
   if (min(ORA_down@result$p.adjust) < 0.05){
     ora_down <- dotplot(ORA_down,
-                        showCategory = 5,
+                        showCategory = 7,
                         label_format = 30,
-                        orderBy = "x") +
-      labs(title = title,
-           subtitle = i) +
-      theme(legend.position = "right",
-            legend.box = "vertical")
+                        orderBy = "x",
+                        font.size = 20) + 
+      labs(title = title) +
+      theme(plot.title = element_text(size = 20),
+            legend.position = "right",
+            legend.box = "vertical",
+            legend.title = element_text(size = 16),
+            legend.text = element_text(size = 14))
       print(ora_down)
       
       # create table of top GOBP terms with genes

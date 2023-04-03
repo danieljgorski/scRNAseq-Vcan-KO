@@ -40,13 +40,16 @@ ORA_up <- function (df, identity, detected_genes, title) {
   # plot ORA upregulated
     if (min(ORA_up@result$p.adjust) < 0.05){
       ora_up <- dotplot(ORA_up,
-                        showCategory = 5,
+                        showCategory = 7,
                         label_format = 30,
-                        orderBy = "x") + 
-        labs(title = title,
-             subtitle = i) +
-        theme(legend.position = "right",
-              legend.box = "vertical")
+                        orderBy = "x",
+                        font.size = 20) + 
+        labs(title = title) +
+        theme(plot.title = element_text(size = 20),
+              legend.position = "right",
+              legend.box = "vertical",
+              legend.title = element_text(size = 16),
+              legend.text = element_text(size = 14))
       print(ora_up)
       
       # create table of top GOBP terms with genes
