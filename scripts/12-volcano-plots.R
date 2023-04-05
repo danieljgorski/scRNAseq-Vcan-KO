@@ -23,22 +23,16 @@ for (i in output_dirs) {
   }
 }
 
-# Loop through clusters and output VolcanoPlots
+# Loop through clusters and output volcano plots
 for (i in unique(dge_no_threshold$cluster)) {
-  pdf(
-    file = paste0(
-      "results/volcano-plots/VolcanoPlot_",
-      i,
-      ".pdf"
-    ),
+  pdf(file = paste0("results/volcano-plots/VolcanoPlot_", i, ".pdf"),
     height = 6,
     width = 8,
-    useDingbats = F
-  )
-  VolcanoPlot(
-    df = dge_no_threshold,
-    identity = i,
-    title = paste0("Differential gene expression: ", i, " - KO/WT")
-  )
+    useDingbats = F)
+  VolcanoPlot(df = dge_no_threshold,
+              identity = i,
+              top_n_stat = 10,
+              top_n_fc = 0,
+              title = paste0(i, " differential gene expression: ", "Vcan-KO/WT"))
   dev.off()
 }
