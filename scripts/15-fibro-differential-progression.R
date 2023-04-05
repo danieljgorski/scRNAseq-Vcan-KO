@@ -1,21 +1,12 @@
-# Differential progression analysis on fibroblasts, workflow adopted from 
-# https://kstreet13.github.io/bioc2020trajectories/articles/workshopTrajectories.html
-# and https://hectorrdb.github.io/condimentsPaper/articles/TGFB.html
+# TI and differential progression analysis on fibroblasts in monocle3
 
 # Load libraries
 library(Seurat)
-library(ggplot2)
-library(patchwork)
-library(condiments)
-library(tradeSeq)
-library(slingshot)
-library(dplyr)
-library(SingleCellExperiment)
-library(RColorBrewer)
-library(cowplot)
-library(scales)
-library(pheatmap)
-library(scater)
+library(SeuratWrappers)
+library(tidyverse)
+library(monocle3)
+source("scripts/etc/geno_colors.R")
+source("scripts/etc/colors.R")
 
 # Set up output dirs
 output_dirs <- c("results",
@@ -30,227 +21,163 @@ for (i in output_dirs) {
 }
 
 # Load the fibroblast subset object
-load("results/objects/fibro.Rdata")
+load("results/objects/obj_fibro_subset.Rdata")
 
-# Convert to singleCellExperiment
-sce <- as.SingleCellExperiment(fibro, assay = "RNA")
+# Select root cell IDs 
+root <- CellSelector(plot = DimPlot(obj, reduction = "umap"))
+save(root, file = "results/fibro-differential-progression/root.Rdata")
 
-# Plot the genotypes
-df <- bind_cols(
-  as.data.frame(reducedDims(sce)$UMAP),
-  as.data.frame(colData(sce)[, -3])
-) %>%
-  sample_frac(1)
-p1 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = genotype)) +
-  geom_point(size = .7) +
-  scale_color_manual(values=c("#999999", "#6899D1")) +
-  labs(col = "Genotype", x="UMAP-1", y="UMAP-2") +
-  theme_classic() +
-  theme(axis.text = element_blank())
-p1
-pdf(file = "results/fibro-differential-progression/genotypes.pdf",
-    height = 4,
-    width = 6,
-    useDingbats = F)
-print(p1)
-dev.off()
+# Fibroblast TI analysis with monocle3
 
-# UMAP of fibroblast subset with basic annotation
-p2 <- plotReducedDim(sce, dimred = "UMAP",
-                     colour_by = "basic_annotation",
-                     text_by = "basic_annotation") +
-  theme(legend.title = element_blank())
-pdf(file = "results/fibro-differential-progression/basic_annotation.pdf",
-    height = 4,
-    width = 6,
-    useDingbats = F)
-print(p2)
-dev.off()
+# Convert Seurat object to cds
+cds <- as.cell_data_set(obj, reduction = "umap")
+cds <- estimate_size_factors(cds)
+cds@rowRanges@elementMetadata@listData[["gene_short_name"]] <- rownames(obj)
+cds <- cluster_cells(cds, reduction_method = "UMAP")
 
-# Calculate the imbalance score and visualize
-scores <- condiments::imbalance_score(
-  Object = df %>% select(UMAP_1, UMAP_2) %>% as.matrix(), 
-  conditions = df$genotype,
-  k = 20, smooth = 40)
-df$scores <- scores$scaled_scores
-p3 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = scores)) +
-  geom_point(size = .7) +
-  scale_color_viridis_c(option = "C") +
-  labs(col = "Imbalance\nscore", x="UMAP-1", y="UMAP-2") +
-  theme_classic() +
-  theme(axis.text = element_blank())
-p3
-pdf(file = "results/fibro-differential-progression/imbalance.pdf",
-    height = 4,
-    width = 6,
-    useDingbats = F)
-print(p3)
-dev.off()
+# Select out main fibroblast population
+cds <- choose_cells(cds)
+cds <- cluster_cells(cds, reduction_method = "UMAP")
 
-# Plot markers of resting and activated fibroblasts
-for (i in c("Gsn", "Cthrc1", "Postn", "Col1a1")) {
-  p <- plotReducedDim(sce,
-                      dimred = "UMAP",
-                      colour_by = i,
-                      by_exprs_values = "logcounts") +
-    scale_fill_viridis_b() +
-    theme(legend.title = element_text(face = "italic"))
-  pdf(file = paste0("results/fibro-differential-progression/featureplot_", i, ".pdf"),
-      height = 4,
-      width = 6,
-      useDingbats = F)
-  print(p)
-  dev.off()
-}
+# Infer trajectory
+cds <- learn_graph(cds, use_partition = F)
+plot_cells(cds, label_groups_by_cluster = FALSE,
+           label_leaves = FALSE,
+           label_branch_points = FALSE)
 
-# Trajectory inference with slingshot, starting in Fibro-Rest, which are
-# are resting fibroblasts (Gsn+), ending in Fibro-Myo-3, which are activated
-# fibroblasts, (Postn+, Cthrc1+, Col1a1-high)
-sce <- slingshot(sce,
-                 reducedDim = 'UMAP',
-                 clusterLabels = colData(sce)$basic_annotation)
+# Order cells along pseudotime, using the root cells as start
+cds <- order_cells(cds, root_cells = root)
+plot_cells(cds, color_cells_by = "pseudotime",
+           label_cell_groups = FALSE,
+           label_leaves = FALSE, 
+           label_branch_points = F)
+save(cds, file = "results/objects/obj_fibro_subset_cds.Rdata")
 
-# Test whether trajectory should be fitted independently for
-# different conditions or not
-set.seed(821)
-topologyTest(SlingshotDataSet(sce),
-             sce$genotype,
-             rep = 100,
-             methods = "KS_mean",
-             threshs = .01)
+# Subset seurat obj match manual subset selected by cluster_cells()
+obj[["cell_ids"]] <- rownames(obj@meta.data)
+obj <- subset(obj, subset = cell_ids %in% colnames(cds))
 
-# Plot a joint trajectory, topology test not significant
-df <- bind_cols(
-  as.data.frame(reducedDims(sce)$UMAP),
-  as.data.frame(colData(sce)[,-27]) # cannot include the pseudotime ordering column here
-) %>%
-  sample_frac(1)
-curve <- slingCurves(sce)[[1]]
-p4 <- ggplot(df, aes(x = UMAP_1, y = UMAP_2, col = slingPseudotime_1)) +
-  geom_point(size = .7) +
-  scale_color_viridis_c() +
-  labs(col = "Pseudotime", x="UMAP-1", y="UMAP-2") +
-  geom_path(data = curve$s[curve$ord, ] %>% as.data.frame(),
-            col = "black", size = 1.25) +
-  theme_classic() +
-  theme(axis.text = element_blank())
-p4
-pdf(file = "results/fibro-differential-progression/trajectory.pdf",
-    height = 4,
-    width = 6,
-    useDingbats = F)
-print(p4)
-dev.off()
+# Save pseudotime values inside seurat object metadata
+obj[["monocle3_pseudotime"]] <- pseudotime(cds, reduction_method = "UMAP")
+
+# Statistical testing of pseudotime values
+data <- data.frame(obj$monocle3_pseudotime)
+colnames(data)[1] <- "pseudotime"
+data$genotype <- obj$genotype
+data$genotype <- factor(obj$genotype, levels = c("Vcan-WT", "Vcan-KO"),
+                        labels = c("WT", "Vcan-KO"))
+
+# Kolmogorov-Smirnov Test of pseudotime distributions
+ks <- ks.test(data[data$genotype=='Vcan-KO',1], data[data$genotype=='WT',1])
 
 # Plot the pseudotime distributions of each genotype
-p5 <- ggplot(df, aes(x = slingPseudotime_1,
+p <- ggplot(data, aes(x = pseudotime,
                      fill = genotype,
                      color = genotype)) +
   geom_density(alpha = .5) +
-  scale_fill_manual(values=c("#999999", "#55A0FB")) +
-  scale_color_manual(values=c("#999999", "#55A0FB")) +
-  labs(x = "Pseudotime", fill = "Genotype", y="Density", color = "Genotype") +
+  scale_fill_manual(values = geno_colors) +
+  scale_color_manual(values = geno_colors) +
+  labs(x = "Pseudotime", fill = "Genotype", y = "Density", color = "Genotype") +
+  annotate("text", x = 4, y = .0725, label = "P < 2.2e-16", size = 9) +
   theme_classic() +
   theme(legend.position = "top",
-        legend.justification = "left")
-p5
+        legend.key.height = unit(1, "cm"),
+        legend.key.width =  unit(1, "cm"),
+        legend.justification = "left",
+        legend.title = element_blank(),
+        legend.text = element_text(size = 24),
+        axis.title = element_text(size = 24),
+        axis.text = element_text(size = 24))
 pdf(file = "results/fibro-differential-progression/differential-progression.pdf",
-    height = 4,
-    width = 6,
+    width = 8,
     useDingbats = F)
-print(p5)
+print(p)
 dev.off()
 
-# Kolmogorov-Smirnov Test for differential progression
-progressionTest(SlingshotDataSet(sce), conditions = sce$genotype)
-# KS-test statistic = 4.653205, p-value = 1.634077e-06, significant
-
-# Differential gene expression
-set.seed(3)
-icMat <- evaluateK(counts = sce,
-                   conditions = factor(colData(sce)$genotype),
-                   nGenes = 300,
-                   k = 3:7)
-
-# Fit GAM, 4 knots had best fit
-set.seed(3)
-sce <- fitGAM(counts = sce,
-              nknots = 4,
-              conditions = factor(colData(sce)$genotype))
-mean(rowData(sce)$tradeSeq$converged)
-
-# Differential expression across conditions through pseudotime
-condRes <- conditionTest(sce, l2fc = log2(1.2))
-condRes$padj <- p.adjust(condRes$pvalue, "fdr")
-condRes <- condRes %>% filter(padj <= 0.05) %>% arrange(desc(waldStat))
-high_exp <- assay(sce, "counts") %>% log1p() %>% rowMeans() # calculate log1p mean expression of each gene 
-high_exp <- high_exp[high_exp > 0.4] # genes with high expression
-high_exp <- names(high_exp)
-condRes <- condRes %>% filter(rownames(condRes) %in% high_exp) # Filter out differentially expressed genes with low expression
-condRes$gene <- rownames(condRes)
-condRes <- condRes[,c("gene", "waldStat", "df", "pvalue", "padj")]
-deg_ps <- condRes
-write.csv(deg_ps, file = "results/fibro-differential-progression/deg_ps.csv", row.names = F)
-
-# Heatmaps of genes DE between conditions, ordered according to a hierarchical 
-# clustering on the WT condition
-yhatSmooth <- predictSmooth(sce,
-                            gene = deg_ps$gene,
-                            nPoints = 100,
-                            tidy = FALSE) %>%
-  log1p()
-yhatSmoothScaled <- t(apply(yhatSmooth,1, scales::rescale))
-heatSmooth_wt <- pheatmap(yhatSmoothScaled[, 1:100],
-                          cluster_cols = FALSE,
-                          border_color = NA,
-                          show_rownames = FALSE,
-                          show_colnames = FALSE,
-                          main = "WT",
-                          legend = FALSE,
-                          silent = TRUE)
-matchingHeatmap_oe <- pheatmap(yhatSmoothScaled[heatSmooth_wt$tree_row$order, 101:200],
-                               cluster_cols = FALSE,
-                               border_color = NA,
-                               cluster_rows = FALSE,
-                               show_rownames = TRUE,
-                               show_colnames = FALSE,
-                               main = "Hmmr-OE",
-                               legend = FALSE,
-                               silent = TRUE,
-                               fontsize_row = 6)
-p9 <- plot_grid(heatSmooth_wt[[4]], matchingHeatmap_oe[[4]], ncol = 2)
-p9
-pdf(file = "results/fibro-differential-progression/deg_ps_heatmap.pdf",
-    height = 7,
-    width = 6,
-    useDingbats = F)
-print(p9)
+# Plot pseudotime UMAP
+p <- plot_cells(cds,
+                color_cells_by = "pseudotime",
+                label_cell_groups = FALSE,
+                label_leaves = FALSE, 
+                label_branch_points = F,
+                trajectory_graph_color = "black",
+                trajectory_graph_segment_size = 1.5,
+                label_roots = F,
+                cell_size = .1,
+                cell_stroke = 1) +
+  labs(title="Pseudotime", x = "UMAP-1", y = "UMAP-2") +
+  scale_color_viridis_c() +
+  theme(axis.text = element_blank(),
+        legend.key.size = unit(.75, "cm"),
+        legend.position = c(0.275,0.94),
+        legend.direction = "horizontal",
+        legend.title = element_blank(),
+        plot.title = element_text(size = 40, hjust = 0),
+        legend.spacing.y = unit(0.15, "cm"),
+        legend.text = element_text(size = 14),
+        axis.title = element_text(size = 24))
+p
+pdf(file = "results/fibro-differential-progression/pseudotime.pdf",
+    useDingbats = F,
+    width = 3.5)
+print(p)
 dev.off()
 
-# Visualize genes
-for (i in deg_ps$gene) {
-  p <- plotSmoothers(sce,
-                     assays(sce)$counts,
-                     gene = i,
-                     lwd = 2.5,
-                     border = TRUE,
-                     size = .3,
-                     curvesCols = geno_colors) +
-    scale_color_manual(values = geno_colors,
-                       labels = c("WT", "Hmmr-OE")) +
-    ggtitle(i) +
-    theme_classic() +
-    theme(plot.title = element_text(face = "italic", size = 24),
-          legend.position = "none",
-          legend.title = element_blank()) +
-    guides(color = guide_legend(override.aes = list(size = 3.5)))
-  pdf(file = paste0("results/fibro-differential-progression/deg_ps_", i, ".pdf"),
-      height = 4,
-      width = 6,
-      useDingbats = F)
-  print(p)
-  dev.off()
-}
+# Plot basic_annotation UMAP
+p <- plot_cells(cds,
+                color_cells_by = "basic_annotation",
+                label_leaves = FALSE, 
+                label_branch_points = F,
+                trajectory_graph_color = "black",
+                trajectory_graph_segment_size = 1.5,
+                label_cell_groups = F,
+                label_roots = F,
+                group_label_size = 12,
+                cell_size = .05,
+                cell_stroke = .5) +
+  labs(title = "Fibroblast subset", x = "UMAP-1", y = "UMAP-2") +
+  scale_color_manual(values = c("#F5705B",
+                              "#F1AC78",
+                              "#F3A29B",
+                              "#32CEF0",
+                              "#FF843F",
+                              "#7F7F9D",
+                              "#FF5D4E")) +
+  theme(axis.text = element_blank(),
+        axis.title = element_text(size = 24),
+        plot.title = element_text(size = 40, hjust = 0),
+        legend.title = element_blank(),
+        legend.justification = "top",
+        legend.text = element_text(size = 20))
+p
+pdf(file = "results/fibro-differential-progression/fibro-subset.pdf",
+    useDingbats = F,
+    width = 5.75)
+print(p)
+dev.off()
 
-# Save fibroblast slingshot object
-save(sce, file = "results/objects/fibro-slingshot.Rdata")
+# GOI through pseudotime
+Genesofinterest <- c("Gsn", "Vcan", "Postn", "Cthrc1", "Col1a1")
+PScds <- cds[rowData(cds)$gene_short_name %in% Genesofinterest]
+p <- plot_genes_in_pseudotime(PScds,
+                              trend_formula = "~ splines::ns(pseudotime, df=3)", 
+                              vertical_jitter = T,
+                              horizontal_jitter = T,
+                              cell_size = 0.75,
+                              label_by_short_name = F,
+                              ncol = 5,
+                              nrow = 1,
+                              panel_order = Genesofinterest) + 
+  scale_color_viridis_c() +
+  labs(color = "Pseudotime")+
+  xlab("Pseudotime") +
+  geom_line(aes(x = pseudotime, y = expectation), color = "black", size = 3) +
+  theme(strip.text.x = element_text(size = 42, face = "italic", hjust = 0),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 26),
+        axis.text.x = element_blank(),
+        axis.title = element_text(size = 26))
+pdf(file = "results/fibro-differential-progression/GOI-ps.pdf", height = 7, width = 21)
+print(p)
+dev.off()
+
