@@ -1,102 +1,55 @@
-# This produces a Volcano plot with statistically significant p < 0.01 genes
-# colored red (up-regulated) and blue (down-regulated). The top 5 most
-# statistically significant and top 5 most highly regulated genes
-# with an absolute average log2  fold change above 0.25  are labeled with
-# their gene symbol.
-
-# Input data is a dataframe from the Seurat FindMarkers output (with extra
-# column for regulation). Meant to be iterated over the identity variable,
-# which will subset the dataframe from the cluster column. Works best if the
-# DGE is done without a threshold, logfc.threshold = 0, then non-
-# significantly regulated genes, yet still expressed, appear as grey dots.
-
-VolcanoPlot <- function(df, identity, title) {
-
-  # subset each cluster, calc -log10(p-adj)
-  deg <- df[df$cluster == identity, ]
-  deg$neglog10p <- -(log10(deg$p_val_adj))
-
-  # filter significantly upregulated genes
-  deg_up <- deg[deg$regulation == "Up", ]
-  deg_up_sig <- deg_up[deg_up$p_val_adj < 0.01, ]
-  deg_up_sig_fc <- deg_up_sig[deg_up_sig$avg_log2FC > 0.25, ]
-  deg_up_sig_fc_topsig <- deg_up_sig_fc %>% slice_min(p_val_adj, n = 6)
-  deg_up_sig_fc_topfc <- deg_up_sig_fc %>% slice_max(avg_log2FC, n = 6)
-  deg_up_tops <- rbind(deg_up_sig_fc_topsig, deg_up_sig_fc_topfc)
-  deg_up_tops <- distinct(deg_up_tops)
-  deg_up_tops <- distinct(deg_up_tops)
-
-  # filter significantly downregulated genes
-  deg_down <- deg[deg$regulation == "Down", ]
-  deg_down_sig <- deg_down[deg_down$p_val_adj < 0.01, ]
-  deg_down_sig_fc <- deg_down_sig[deg_down_sig$avg_log2FC < -0.25, ]
-  deg_down_sig_fc_topsig <- deg_down_sig_fc %>% slice_min(p_val_adj, n = 6)
-  deg_down_sig_fc_topfc <- deg_down_sig_fc %>% slice_min(avg_log2FC, n = 6)
-  deg_down_tops <- rbind(deg_down_sig_fc_topsig, deg_down_sig_fc_topfc)
-  deg_down_tops <- distinct(deg_down_tops)
-
-  # volcano plot
-  vp <- ggplot(
-    deg,
-    aes(
-      x = avg_log2FC,
-      y = neglog10p
-    )
-  )
-  vc <- vp + geom_point(colour = "grey") +
-    geom_point(
-      data = deg_up_sig,
-      colour = "#eb2a0e"
-    ) +
-    geom_label_repel(
-      data = deg_up_tops,
-      aes(label = gene),
-      colour = "#eb2a0e",
-      fill = "white",
-      fontface = "italic",
-      size = 6,
-      force = 6,
-      #nudge_x = ((max(abs(deg$avg_log2FC)))/4),
-      #nudge_y = 58,
-      segment.size = 0.1,
-      segment.alpha = 0.3,
-      max.overlaps = Inf) +
-   geom_point(
-      data = deg_down_sig,
-      colour = "#2664ad"
-    ) +
-    geom_label_repel(
-      data = deg_down_tops,
-      aes(label = gene),
-      colour = "#2664ad",
-      fill = "white",
-      fontface = "italic",
-      size = 6,
-      force = 2,
-      #nudge_x = (-(max(abs(deg$avg_log2FC)))/3),
-      #nudge_y = 80,
-      segment.size = 0.1,
-      segment.alpha = 0.3,
-      max.overlaps = Inf) +
-    xlab(expression("avg log"[2] * "(FC)")) +
-    ylab(expression("-log"[10] * "(P"[adj] * ")")) +
-    xlim(
-      -max(abs(deg$avg_log2FC)),
-      max(abs(deg$avg_log2FC))
-    ) +
-    geom_hline(
-      yintercept = -log10(0.01),
-      linetype = "dashed",
-      color = "grey",
-      size = 0.1
-    ) +
+VolcanoPlot <- function(df,
+                        identity,
+                        title = "DE Genes",
+                        top_n_stat = 5,
+                        top_n_fc = 5,
+                        colors = c("black", "lightgrey")) {
+  # Filter by identity
+  df <- df %>% filter(cluster == identity)
+  
+  # Calculate -log10(Padj)
+  df <- df %>% mutate(neglog10p = -(log10(df$p_val_adj)))
+  
+  # Indicate if genes are statically significant and have abs log2 FC > 0.25
+  df <- df %>% mutate(significance = case_when(p_val_adj < 0.01 &
+                                                 abs(avg_log2FC) > 0.25
+                                               ~ "DE",
+                                               .default = "Not-DE"))
+  
+  # Select top n DE genes most statistically significant
+  df_top_n_stat <- df %>%
+    filter(significance == "DE") %>%
+    group_by(regulation) %>%
+    slice_min(p_val_adj, n = top_n_stat)
+  
+  # Select top n DE genes with largest FC
+  df_top_n_fc <- df %>%
+    filter(significance == "DE") %>%
+    group_by(regulation) %>%
+    slice_max(abs(avg_log2FC), n = top_n_fc)
+  
+  # Plot
+  v <- ggplot(df, aes(x = avg_log2FC, y = neglog10p)) +
+    geom_point(aes(color = significance)) +
+    scale_color_manual(values = colors) +
+    geom_hline(yintercept = -log10(0.01), linetype = "dashed",
+               color = "black", linewidth = 0.2) +
+    geom_vline(xintercept = 0.25, linetype = "dashed",
+               color = "black", linewidth = 0.2) +
+    geom_vline(xintercept = -0.25, linetype = "dashed",
+               color = "black", linewidth = 0.2) +
+    geom_label_repel(data = df_top_n_stat, aes(label = gene)) +
+    geom_label_repel(data = df_top_n_fc, aes(label = gene)) +
+    labs(x = expression("avg log"[2] * "(fold change)"),
+         y = expression("-log"[10] * "(P"[adj] * ")"),
+         title = title) +
     theme_bw() +
-    theme(
-      panel.grid.major = element_blank(),
-      panel.grid.minor = element_blank(),
-      axis.title = element_text(size = 18),
-      plot.title = element_text(size = 18)
-    ) +
-    ggtitle(title)
-  print(vc)
+    theme(plot.title = element_text(size = 12),
+          legend.title = element_blank(),
+          legend.text = element_text(size = 12),
+          axis.title = element_text(size = 12),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank())
+  print(v)
 }
+
