@@ -7,7 +7,7 @@ library(Seurat)
 load("results/objects/obj_annotated.Rdata")
 
 # Subset fibroblast clusters, without cycling fibroblasts
-fibro <- subset(x = obj, idents = c("Fibro-Myo-1",
+obj <- subset(x = obj, idents = c("Fibro-Myo-1",
                                     "Fibro-Myo-2",
                                     "Fibro-Myo-3",
                                     "Fibro-Act-1",
@@ -16,5 +16,4 @@ fibro <- subset(x = obj, idents = c("Fibro-Myo-1",
                                     "Fibro-Rest"))
 
 # Save fibroblast object
-save(fibro, file = "results/objects/fibro.Rdata")
-
+save(obj, file = "results/objects/obj_fibro_subset.Rdata")
