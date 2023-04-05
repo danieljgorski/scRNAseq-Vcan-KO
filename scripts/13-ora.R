@@ -38,17 +38,17 @@ remove(obj)
 # Loop through clusters and export upregulated ORA analyses
 for (i in unique(dge_no_threshold$cluster)) {
   pdf(file = paste0("results/ora/ORA_up_", i, ".pdf"),
-      width = 8,
+      width = 8.15,
       useDingbats = F)
-  ORA_up(dge_no_threshold, i, detected, "GOBP over-representation\n in upregulated DEG")
+  ORA_up(dge_no_threshold, i, detected, "GOBP over-representation\n in upregulated DE genes")
   dev.off()
 }
 
 # Loop through clusters and export downregulated ORA analyses
 for (i in unique(dge_no_threshold$cluster)) {
   pdf(file = paste0("results/ora/ORA_down_", i, ".pdf"),
-      width = 8,
+      width = 8.15,
       useDingbats = F)
-  ORA_down(dge_no_threshold, i, detected, "GOBP over-representation\n in downregulated DEG")
+  ORA_down(dge_no_threshold, i, detected, "GOBP over-representation\n in downregulated DE genes")
   dev.off()
 }
