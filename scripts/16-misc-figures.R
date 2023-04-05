@@ -8,6 +8,8 @@ library(ggplot2)
 library(ggpubr)
 library(rstatix)
 library(ggrepel)
+library(dplyr)
+library(org.Mm.eg.db)
 source("scripts/etc/colors.R")
 source("scripts/etc/geno_colors.R")
 source("scripts/etc/dimplotlevels.R")
@@ -29,6 +31,8 @@ load("results/objects/obj_annotated.Rdata")
 obj <- DietSeurat(obj, counts = F, dimreducs = "umap")
 save(obj, file = "results/objects/obj_annotated_diet.Rdata")
 
+
+## Quality control plots----
 # Metadata to df for ggplot2 QC plots
 df <- obj@meta.data
 df$genotype <- factor(df$genotype, levels = c("Vcan-WT", "Vcan-KO"),
@@ -89,7 +93,7 @@ pdf(file = "results/misc-figures/percent_mt.pdf",
 print(p)
 dev.off()
 
-# DimPlot with correct sizing
+## DimPlot with correct sizing----
 p <- DimPlot(obj,
              reduction = "umap",
              pt.size = .3,
@@ -125,9 +129,9 @@ pdf(file = "results/misc-figures/DimPlot_basic_annotation.pdf",
 print(q)
 dev.off()
 
-# Feature plots of canonical markers
+## Feature plots of canonical markers----
 gois <- c("Col1a1", "Wt1", "Dmkn", "Tcf21", "Pdgfra", "Gsn",
-          "Vcan", "Postn", "Cthrc1", "Mki67")
+          "Vcan", "Postn", "Cthrc1", "Mki67", "Ctgf")
 for (i in gois) {
   p <- FeaturePlot(obj, features = i, cols = c("lightgrey", "#fe3108")) +
     labs(x = "UMAP-1", y = "UMAP-2", title = i) +
@@ -146,14 +150,126 @@ for (i in gois) {
   dev.off()
 }
 
-# VlnPlot of Vcan expression
-v <- VlnPlot(obj, features = "Vcan", cols = colors, pt.size = 0) +
+## Multi-panel volcano plots (certain order)----
+# Retrieve GO terms of interest
+res_to_ERstress <- AnnotationDbi::select(org.Mm.eg.db, keytype="GOALL",
+                                         keys="GO:0034976", columns="SYMBOL")
+res_to_ERstress <- unique(res_to_ERstress$SYMBOL)
+translation <- AnnotationDbi::select(org.Mm.eg.db, keytype="GOALL",
+                                     keys="GO:0006412", columns="SYMBOL")
+translation <- unique(translation$SYMBOL)
+
+# Load unfiltered DE
+df <- read.csv(file = "results/differential-gene-expression/dge_no_threshold.csv")
+
+# Calculate -log10(Padj)
+df <- df %>% mutate(neglog10p = -(log10(df$p_val_adj)))
+
+# Factor order
+df$cluster <- factor(df$cluster, levels = c("Epi-Rest",
+                                            "Fibro-Rest",
+                                            "Epi-Act-1",
+                                            "Fibro-Act-1",
+                                            "Epi-Act-2",
+                                            "Fibro-Act-2",
+                                            "Epi-Act-3",
+                                            "Fibro-Myo-1",
+                                            "Epi-Cyc",
+                                            "Fibro-Myo-2",
+                                            "Fibro-IFN",
+                                            "Fibro-Myo-3",
+                                            "Fibro-Cyc"))
+
+
+# Indicate if genes are statically significant and have abs log2 FC > 0.25
+df <- df %>% mutate(significance = case_when(p_val_adj < 0.01 &
+                                               abs(avg_log2FC) > 0.25
+                                             ~ "DE",
+                                             .default = "Not-DE"))
+
+# Indicate if DE genes are in GO term translation or response to ER stress
+df <- df %>% mutate(significance = case_when(significance == "DE" &
+                                               gene %in% translation ~
+                                               "DE: Translation - GO:0006412",
+                                             TRUE ~ as.character(significance)))
+df <- df %>% mutate(significance = case_when(significance == "DE" &
+                                               gene %in% res_to_ERstress ~
+                                               "DE: Response to ER Stress - GO:0034976",
+                                             TRUE ~ as.character(significance)))
+df$significance <- factor(df$significance, levels = c("Not-DE",
+                                                      "DE",
+                                                      "DE: Response to ER Stress - GO:0034976",
+                                                      "DE: Translation - GO:0006412"))
+
+# Plot
+v <- ggplot(df, aes(x = avg_log2FC, y = neglog10p)) +
+  facet_wrap(~ cluster, scales = "free", ncol = 2) +
+  geom_point(aes(color = significance)) +
+  scale_color_manual(values = c("#EBEBEB", "#B8B8B8",  "#f94144", "#858ae3")) +
+  guides(color = guide_legend(override.aes = list(size = 2))) +
+  geom_hline(yintercept = -log10(0.01), linetype = "dashed",
+             color = "#B8B8B8", linewidth = 0.2) +
+  geom_vline(xintercept = 0.25, linetype = "dashed",
+             color = "#B8B8B8", linewidth = 0.2) +
+  geom_vline(xintercept = -0.25, linetype = "dashed",
+             color = "#B8B8B8", linewidth = 0.2) +
+  labs(x = expression("avg log"[2] * "(fold change)"),
+       y = expression("-log"[10] * "(P"[adj] * ")"),
+       title = expression(paste("Differential gene expression: ", italic("Vcan"), "-KO/WT"))) +
+  theme_bw() +
+  theme(plot.title = element_text(size = 12),
+        legend.title = element_blank(),
+        legend.position = c(0.99, 0.015),
+        legend.justification = c(1, 0),
+        legend.text = element_text(size = 9),
+        axis.title = element_text(size = 12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank()) 
+pdf(file = "results/misc-figures/VolcanoPlot_ERstress_Translation.pdf",
+    useDingbats = F,
+    height = 14,
+    width = 6.5)
+print(v)
+dev.off()
+
+## Split Violin of DE UPR genes----
+DE_UPR <- c("Creld2", "Manf", "Hspa5", "Dnajc3")
+for (i in DE_UPR) {
+  v <- VlnPlot(obj,
+               features = i,
+               pt.size = 0,
+               split.by = "genotype",
+               split.plot = TRUE,
+               cols = geno_colors) +
+    labs(title = i,
+         y = "Expression level") +
+    theme(legend.position = "none",
+          axis.title.x = element_blank(),
+          plot.title = element_text(face = "italic", hjust = 0, size = 18))
+  pdf(file = paste0("results/misc-figures/VlnPlot_", i, "_split.pdf"),
+      useDingbats = F,
+      height = 3,
+      width = 5.5)
+      print(v)
+      dev.off()
+}
+
+
+## Violin of Vcan----
+v <- VlnPlot(obj,
+             features = "Vcan",
+             pt.size = 0,
+             cols = colors,
+             sort = T) +
   labs(y = expression(paste(italic("Vcan"), " expression level"))) +
   theme(legend.position = "none",
         axis.title.x = element_blank(),
+        axis.text = element_text(size = 14),
+        axis.title.y = element_text(size = 17),
         plot.title = element_blank())
 pdf(file = "results/misc-figures/VlnPlot_Vcan.pdf",
-    useDingbats = F,
-    height = 3.5)
+    height = 4.75,
+    width = 8.25,
+    useDingbats = F)
 print(v)
 dev.off()
